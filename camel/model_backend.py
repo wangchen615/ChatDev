@@ -16,6 +16,8 @@ from typing import Any, Dict
 
 import openai
 import tiktoken
+import requests
+import json
 
 from camel.typing import ModelType
 from chatdev.statistics import prompt_cost
@@ -95,7 +97,7 @@ class OpenAIModel(ModelBackend):
                 "gpt-4o-mini": 16384, #100000
             }
             num_max_token = num_max_token_map[self.model_type.value]
-            num_max_completion_tokens = num_max_token - num_prompt_tokens
+            num_max_completion_tokens = max(1, num_max_token - num_prompt_tokens)
             self.model_config_dict['max_tokens'] = num_max_completion_tokens
 
             response = client.chat.completions.create(*args, **kwargs, model=self.model_type.value,
@@ -128,7 +130,7 @@ class OpenAIModel(ModelBackend):
                 "gpt-4o-mini": 16384, #100000
             }
             num_max_token = num_max_token_map[self.model_type.value]
-            num_max_completion_tokens = num_max_token - num_prompt_tokens
+            num_max_completion_tokens = max(1, num_max_token - num_prompt_tokens)
             self.model_config_dict['max_tokens'] = num_max_completion_tokens
 
             response = openai.ChatCompletion.create(*args, **kwargs, model=self.model_type.value,
@@ -147,6 +149,81 @@ class OpenAIModel(ModelBackend):
             if not isinstance(response, Dict):
                 raise RuntimeError("Unexpected return from OpenAI API")
             return response
+
+
+class VLLMModel(ModelBackend):
+    r"""vLLM local endpoint in a unified ModelBackend interface."""
+
+    def __init__(self, model_type: ModelType, model_config_dict: Dict) -> None:
+        super().__init__()
+        self.model_type = model_type
+        self.model_config_dict = model_config_dict
+        # Default vLLM endpoint, can be overridden by environment variable
+        self.vllm_endpoint = os.environ.get('VLLM_ENDPOINT', 'http://localhost:8000/v1')
+        self.vllm_model_name = os.environ.get('VLLM_MODEL_NAME', 'default')
+
+    def run(self, *args, **kwargs):
+        string = "\n".join([message["content"] for message in kwargs["messages"]])
+        encoding = tiktoken.encoding_for_model("gpt-3.5-turbo-16k-0613")  # Use OpenAI encoding for token counting
+        num_prompt_tokens = len(encoding.encode(string))
+        gap_between_send_receive = 15 * len(kwargs["messages"])
+        num_prompt_tokens += gap_between_send_receive
+
+        # Prepare the request payload for vLLM
+        payload = {
+            "model": self.vllm_model_name,
+            "messages": kwargs["messages"],
+            "temperature": self.model_config_dict.get("temperature", 0.2),
+            "top_p": self.model_config_dict.get("top_p", 1.0),
+            "max_tokens": self.model_config_dict.get("max_tokens", 4096),
+            "stream": False
+        }
+
+        try:
+            # Make request to vLLM endpoint
+            response = requests.post(
+                f"{self.vllm_endpoint}/chat/completions",
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=60
+            )
+            response.raise_for_status()
+            
+            # Parse vLLM response
+            vllm_response = response.json()
+            
+            # Convert to OpenAI-compatible format
+            openai_response = {
+                "id": vllm_response.get("id", "vllm_response"),
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": self.vllm_model_name,
+                "choices": vllm_response.get("choices", []),
+                "usage": vllm_response.get("usage", {
+                    "prompt_tokens": num_prompt_tokens,
+                    "completion_tokens": 0,
+                    "total_tokens": num_prompt_tokens
+                })
+            }
+            
+            # Calculate cost (set to 0 for local vLLM)
+            cost = 0.0
+            
+            log_visualize(
+                "**[vLLM_Usage_Info Receive]**\nprompt_tokens: {}\ncompletion_tokens: {}\ntotal_tokens: {}\ncost: ${:.6f}\n".format(
+                    openai_response["usage"]["prompt_tokens"], 
+                    openai_response["usage"]["completion_tokens"],
+                    openai_response["usage"]["total_tokens"], 
+                    cost))
+            
+            return openai_response
+            
+        except requests.exceptions.RequestException as e:
+            log_visualize(f"**[vLLM Error]** Request failed: {str(e)}")
+            raise RuntimeError(f"vLLM API request failed: {str(e)}")
+        except Exception as e:
+            log_visualize(f"**[vLLM Error]** Unexpected error: {str(e)}")
+            raise RuntimeError(f"vLLM API unexpected error: {str(e)}")
 
 
 class StubModel(ModelBackend):
@@ -191,6 +268,8 @@ class ModelFactory:
             None
         }:
             model_class = OpenAIModel
+        elif model_type == ModelType.VLLM:
+            model_class = VLLMModel
         elif model_type == ModelType.STUB:
             model_class = StubModel
         else:

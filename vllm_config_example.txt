@@ -1,0 +1,20 @@
+# vLLM Configuration Example
+# Copy these environment variables to your shell or .env file
+
+# vLLM Endpoint Configuration
+export VLLM_ENDPOINT="http://localhost:8000/v1"
+export VLLM_MODEL_NAME="default"
+
+# Optional: OpenAI API Key (for fallback or comparison)
+export OPENAI_API_KEY="your_openai_api_key_here"
+
+# Usage Examples:
+# 1. Use vLLM model:
+#    python3 run.py --task "create a hello world program" --name "HelloWorld" --model VLLM
+#
+# 2. Use vLLM for different tasks:
+#    python3 run.py --task "create a calculator" --name "Calculator" --model VLLM
+#    python3 run.py --task "create a todo app" --name "TodoApp" --model VLLM
+#
+# 3. Use OpenAI (fallback):
+#    python3 run.py --task "create a game" --name "Game" --model GPT_3_5_TURBO

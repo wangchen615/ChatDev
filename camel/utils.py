@@ -91,7 +91,8 @@ def num_tokens_from_messages(
         ModelType.GPT_4_TURBO_V,
         ModelType.GPT_4O,
         ModelType.GPT_4O_MINI,
-        ModelType.STUB
+        ModelType.STUB,
+        ModelType.VLLM
     }:
         return count_tokens_openai_chat_models(messages, encoding)
     else:
@@ -130,6 +131,10 @@ def get_model_token_limit(model: ModelType) -> int:
         return 128000
     elif model == ModelType.GPT_4O_MINI:
         return 128000
+    elif model == ModelType.VLLM:
+        # VLLM models can have varying token limits depending on the specific model
+        # Using a conservative default that should work for most models
+        return 8192
     else:
         raise ValueError("Unknown model type")
 
